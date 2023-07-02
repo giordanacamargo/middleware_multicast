@@ -2,7 +2,7 @@ public class Main implements ICausalMulticast {
     private CausalMulticast causalMulticast;
 
     public Main() {
-        causalMulticast = new CausalMulticast("localhost", 8080, this);
+        causalMulticast = new CausalMulticast("239.255.255.245", 13087, this);
     }
 
     public void sendMulticastMessage(String msg) {

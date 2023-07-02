@@ -2,20 +2,28 @@ import java.net.*;
 import java.io.*;
 import java.util.*;
 
-public class CausalMulticast {
+public class CausalMulticast{
+    static int process_vector_clock_id = 0;
     private MulticastSocket socket;
     private InetAddress group;
     private int port;
     private int[] vectorClock;
     private List<String> buffer;
     private ICausalMulticast client;
+    private Map<ICausalMulticast, Integer> VectorClockDict;
 
     public CausalMulticast(String ip, int port, ICausalMulticast client) {
         try {
+            //224.0.0.0 
+            //through 
+            //239.255.255.255
             this.socket = new MulticastSocket(port);
             this.group = InetAddress.getByName(ip);
             this.port = port;
             this.vectorClock = new int[10]; // Tamanho máximo para o vetor de relógios lógicos
+            this.VectorClockDict = new HashMap<ICausalMulticast, Integer>();
+            this.VectorClockDict.put(client, process_vector_clock_id);
+            process_vector_clock_id++;
             this.buffer = new ArrayList<>();
             this.client = client;
 
@@ -28,10 +36,13 @@ public class CausalMulticast {
 
     public void mcsend(String msg, ICausalMulticast client) {
         try {
-            vectorClock[port]++; // Incrementa o relógio lógico do processo atual
+            System.out.println("DASDASDS");
+            System.out.println("DASDASDS: " + String.valueOf(process_vector_clock_id));
+            vectorClock[VectorClockDict.get(client)] += 1;
+            //VectorClockDict.replace(client, VectorClockDict.get(client)+1); // Incrementa o relógio lógico do processo atual
             String timestamp = buildTimestamp();
 
-            String multicastMsg = timestamp + " " + port + " " + msg;
+            String multicastMsg = timestamp + ";l;" + VectorClockDict.get(client) + ";l;" + msg;
             byte[] buf = multicastMsg.getBytes();
             DatagramPacket packet = new DatagramPacket(buf, buf.length, group, port);
 
@@ -61,7 +72,7 @@ public class CausalMulticast {
     }
 
     private void processReceivedMessage(String receivedMsg) {
-        String[] parts = receivedMsg.split(" ");
+        String[] parts = receivedMsg.split(";l;");
         String timestamp = parts[0];
         int sender = Integer.parseInt(parts[1]);
         String msg = parts[2];
@@ -73,7 +84,7 @@ public class CausalMulticast {
         Iterator<String> iterator = buffer.iterator();
         while (iterator.hasNext()) {
             String bufferedMsg = iterator.next();
-            String[] bufferedParts = bufferedMsg.split(" ");
+            String[] bufferedParts = bufferedMsg.split(";l;");
             String bufferedTimestamp = bufferedParts[0];
             int bufferedSender = Integer.parseInt(bufferedParts[1]);
 
