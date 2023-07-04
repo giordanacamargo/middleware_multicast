@@ -4,8 +4,9 @@ import java.util.*;
 
 public class CausalMulticast{
     //Constantes
-    private static int timeout = 1000; //É um sistema síncrono, usando a medida de 1000ms para o timeout.
-    private static int vectorClockSize = 10;
+    private int timeout = 1000; //É um sistema síncrono, usando a medida de 1000ms para o timeout.
+    private int groupEnterTimeout = 5000; //É um sistema síncrono, usando a medida de 1000ms para o timeout.
+    private int vectorClockSize = 10;
     
     
     
@@ -19,7 +20,9 @@ public class CausalMulticast{
     private int port;
     private int[] vectorClock;
     private int vectorClockIndex;    
-    private int nextVectorClockIndex = -1;
+    private int nextVectorClockIndex = 0;
+    private long groupEnterTimeCounter = 0; // Variavel que contabiliza o tempo de conexão inicial
+    private long groupEnterStartTime = 0;   // Variável que armazena o momento inicial de tentiva de conexão
     private int availableIndex = -1;
     private List<String> buffer;
     private ICausalMulticast client;
@@ -40,6 +43,7 @@ public class CausalMulticast{
             this.buffer = new ArrayList<>();
             this.client = client;
             this.VectorClockDict = new HashMap<ICausalMulticast, Integer>();
+            groupSocket.setSoTimeout(this.timeout);
             groupSocket.joinGroup(group);
             
             startListening();
@@ -56,8 +60,6 @@ public class CausalMulticast{
             String timestamp = buildTimestamp();
 
             String multicastMsg = "U" + ";l;" + timestamp + ";l;" + String.valueOf(vectorClockIndex) + ";l;" + msg;
-            client.deliver(multicastMsg);
-            client.deliver("Timestamp:" + timestamp);
             byte[] buf = multicastMsg.getBytes();
             DatagramPacket packet = new DatagramPacket(buf, buf.length, group, port);
 
@@ -82,59 +84,77 @@ public class CausalMulticast{
                         buf = multicastMsg.getBytes();
                         packet = new DatagramPacket(buf, buf.length, group, port);
                         groupSocket.send(packet);
-
-                        long startTime = System.currentTimeMillis();
-                        long elapsedTime = 0;
-                        while (elapsedTime < timeout) 
+                        this.groupEnterStartTime = System.currentTimeMillis();
+                        try {
+                            //Descarta a própria mensagem de Joining
+                            groupSocket.receive(packet);     
+                            String receivedMsg = new String(packet.getData(), 0, packet.getLength());
+                            client.deliver("Descartei essa: " + receivedMsg);
+                        } catch (Exception e) {
+                            // TODO: handle exception
+                        }
+                        
+                    }
+                    else if(this.status.equals("joining"))
+                    {
+                        this.groupEnterTimeCounter = System.currentTimeMillis() - this.groupEnterStartTime;
+                        if(this.groupEnterTimeCounter < this.groupEnterTimeout)
                         {
                             buf = new byte[1024];
                             packet = new DatagramPacket(buf, buf.length);
-                            groupSocket.receive(packet);
+                            try {
+                                groupSocket.receive(packet); 
+                                String receivedMsg = new String(packet.getData(), 0, packet.getLength());
+                                processReceivedMessage(receivedMsg);
 
-                            String receivedMsg = new String(packet.getData(), 0, packet.getLength());
-                            processReceivedMessage(receivedMsg);
-                            elapsedTime = System.currentTimeMillis()-startTime;
-                        }  
-
-                        if(this.availableIndex == -1)
-                        {
+                                if(this.availableIndex != -1)
+                                {
+                                    if(this.availableIndex >= this.vectorClockSize)
+                                    {
+                                        client.deliver("O sistema atingiu seu limite de usuários.");
+                                        return;
+                                    }
+                                    else
+                                    {                                                 
+                                        client.deliver(receivedMsg);  
+                                        client.deliver("Me informaram que meu indíce deve ser: " + String.valueOf(this.availableIndex));       
+                                        this.vectorClockIndex = this.availableIndex;  
+                                        this.nextVectorClockIndex = vectorClockIndex + 1; 
+                                        this.status = "joined";
+                                    }
+                                }
+                            } catch (Exception e) {
+                                System.out.println("Nenhuma resposta recebida nesta tentativa.");
+                            } 
+                        }
+                        else
+                        {                            
+                            client.deliver("Ninguém respondeu a tentativa de conexão dentro do tempo específicado. Assumindo que o sistema ainda não possui usuários.");
                             this.vectorClockIndex = 0;
                             this.nextVectorClockIndex = 1;
                             this.status = "joined";
-                        }
-
-                        else if(this.availableIndex >= this.vectorClockSize)
-                        {
-                            client.deliver("O sistema atingiu seu limite de usuários.");
-                            return;
-                        }
-
-                        else
-                        {                          
-                            this.vectorClockIndex = this.availableIndex;  
-                            this.nextVectorClockIndex = vectorClockIndex + 1; 
-                            this.status = "joined";
-                        }
-                        client.deliver("Expirou o tempo de aguardo de respostas.");
-                        
-                        if(this.status.equals("joined"))
-                        {
-                            client.deliver("Conectado, posição no Vetor de Relógios: " + String.valueOf(vectorClockIndex));
-                            multicastMsg = "C" + ";l;" + "JOINED " + this.vectorClockIndex;
-                            buf = multicastMsg.getBytes();
-                            packet = new DatagramPacket(buf, buf.length, group, port);
-                            groupSocket.send(packet);
-                            this.status = "working";
-                        }                        
-                    }        
-                    if(this.status == "working")
+                        }       
+                    }                           
+                    else if(this.status.equals("joined"))
+                    {
+                        client.deliver("Conectado, posição no Vetor de Relógios: " + String.valueOf(vectorClockIndex));
+                        multicastMsg = "C" + ";l;" + "JOINED " + this.vectorClockIndex;
+                        buf = multicastMsg.getBytes();
+                        packet = new DatagramPacket(buf, buf.length, group, port);
+                        groupSocket.send(packet);
+                        this.status = "working";
+                    }                   
+                    else if(this.status == "working")
                     {
                         buf = new byte[1024];
                         packet = new DatagramPacket(buf, buf.length);
-                        groupSocket.receive(packet);
-
-                        String receivedMsg = new String(packet.getData(), 0, packet.getLength());
-                        processReceivedMessage(receivedMsg);
+                        try {                            
+                            groupSocket.receive(packet);
+                            String receivedMsg = new String(packet.getData(), 0, packet.getLength());
+                            processReceivedMessage(receivedMsg);
+                        } catch (Exception e) {
+                            //System.out.println("Nenhuma mensagem recebida.");                            
+                        }
                     }
                 }              
             } catch (IOException e) {
@@ -162,6 +182,7 @@ public class CausalMulticast{
                         String multicastMsg = "C" + ";l;" + "ALREADY_JOINED " + this.nextVectorClockIndex;// Todos informam para o novo usuário qual é o próximo slot disponível.
                         byte[] buf = multicastMsg.getBytes();
                         DatagramPacket packet = new DatagramPacket(buf, buf.length, group, port);
+                        client.deliver("Foi solicitado o próximo indice disponível, informei que era o indice " + String.valueOf(this.nextVectorClockIndex) + ".");
                         try {                        
                             groupSocket.send(packet);
                         } catch (Exception e) {
@@ -174,7 +195,7 @@ public class CausalMulticast{
                     //Ele recebe - de todos as instâncias - qual é o lugar disponíve, detectando inconsistência caso eles discordem
                     //Dessa forma realizando um acordo do tipo consenso para definir onde será colocado no VC.
                     if(this.status.equals("joining"))
-                    {
+                    {                        
                         if(this.availableIndex == -1)
                         {
                             this.availableIndex = Integer.parseInt(controlParts[1]);
@@ -241,7 +262,6 @@ public class CausalMulticast{
         for (int i = 0; i < vectorClock.length; i++) {
             vectorClock[i] = Math.max(vectorClock[i], receivedClock[i]);
         }
-
         vectorClock[sender]++; // Incrementa o relógio lógico do remetente
     }
 
