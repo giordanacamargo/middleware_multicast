@@ -7,18 +7,20 @@ public class CausalMulticast{
     private int timeout = 1000; //É um sistema síncrono, usando a medida de 1000ms para o timeout.
     private int groupEnterTimeout = 5000; //É um sistema síncrono, usando a medida de 1000ms para o timeout.
     private int vectorClockSize = 10;
-    
-    
-    
-    static int process_vector_clock_id = 0;
+    private int BASE_PORT = 20000;
     
     
     //private DatagramSocket socket;
     private String status;
-    private MulticastSocket groupSocket;
-    private InetAddress group;
+
+    //Informações para a etapa de descoberta de novos membros
+    private MulticastSocket GroupListener;
+    private InetAddress GroupIP;
+    private int GroupPort;
+
+
+    private InetAddress ip;
     private int port;
-    private int[] vectorClock;
     private int vectorClockIndex;    
     private int nextVectorClockIndex = 0;
     private long groupEnterTimeCounter = 0; // Variavel que contabiliza o tempo de conexão inicial
@@ -26,25 +28,28 @@ public class CausalMulticast{
     private int availableIndex = -1;
     private List<String> buffer;
     private ICausalMulticast client;
-    private Map<ICausalMulticast, Integer> VectorClockDict;
-    private Map<ICausalMulticast, Integer> SocketDict;    
+
+    private int[] vectorClock;  //Vetor de Relógios
+    private Map<Integer, InetAddress> IPs;          //Endereço acessadas pelo Identificador
+    private Map<Integer, Integer> Ports;            //Endereço acessadas pelo Identificador
+    private Map<Integer, DatagramSocket> Sockets;          //Endereço acessadas pelo Identificador
 
     public CausalMulticast(String ip, int port, ICausalMulticast client) {
         try {
             this.status = "starting";
-            //224.0.0.0 
-            //through 
-            //239.255.255.255
+            this.ip = InetAddress.getByName("127.0.0.1"); //ALTERAR
+            this.port = 20000;
             //this.socket = new DatagramSocket(port, group);
-            this.groupSocket = new MulticastSocket(port);
-            this.group = InetAddress.getByName(ip);
-            this.port = port;
+            this.GroupIP = InetAddress.getByName(ip);
+            this.GroupPort = port;
+            this.GroupListener = new MulticastSocket(GroupPort);
+
+
             this.vectorClock = new int[vectorClockSize]; // Tamanho máximo para o vetor de relógios lógicos
             this.buffer = new ArrayList<>();
             this.client = client;
-            this.VectorClockDict = new HashMap<ICausalMulticast, Integer>();
-            groupSocket.setSoTimeout(this.timeout);
-            groupSocket.joinGroup(group);
+            GroupListener.setSoTimeout(this.timeout);
+            GroupListener.joinGroup(this.GroupIP);
             
             startListening();
         } catch (IOException e) {
@@ -61,16 +66,31 @@ public class CausalMulticast{
 
             String multicastMsg = "U" + ";l;" + timestamp + ";l;" + String.valueOf(vectorClockIndex) + ";l;" + msg;
             byte[] buf = multicastMsg.getBytes();
-            DatagramPacket packet = new DatagramPacket(buf, buf.length, group, port);
 
-            groupSocket.send(packet);
+            
+            InetAddress temp_group;
+            Integer temp_port;
+            DatagramSocket temp_socket;
+
+            for(int i = 0; i < this.nextVectorClockIndex; i++)
+            {
+                temp_group = IPs.get(i);
+                temp_port = Ports.get(i);
+                temp_socket = Sockets.get(i);
+                DatagramPacket packet = new DatagramPacket(buf, buf.length, temp_group, temp_port);
+                temp_socket.send(packet);
+                temp_socket.receive(packet);
+            }
+
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
     private void startListening() {
-        Thread listenerThread = new Thread(() -> {
+
+        //Responsável por Fazer a verificação de envio de mensagens no grupo de multicast.
+        Thread GroupListenerThread = new Thread(() -> {
             try {                
                 while (true) 
                 {
@@ -82,12 +102,12 @@ public class CausalMulticast{
                         this.status = "joining";    
                         multicastMsg = "C" + ";l;" + "JOINING";
                         buf = multicastMsg.getBytes();
-                        packet = new DatagramPacket(buf, buf.length, group, port);
-                        groupSocket.send(packet);
+                        packet = new DatagramPacket(buf, buf.length, GroupIP, GroupPort);
+                        GroupListener.send(packet);
                         this.groupEnterStartTime = System.currentTimeMillis();
                         try {
                             //Descarta a própria mensagem de Joining
-                            groupSocket.receive(packet);     
+                            GroupListener.receive(packet);     
                             String receivedMsg = new String(packet.getData(), 0, packet.getLength());
                             client.deliver("Descartei essa: " + receivedMsg);
                         } catch (Exception e) {
@@ -103,7 +123,7 @@ public class CausalMulticast{
                             buf = new byte[1024];
                             packet = new DatagramPacket(buf, buf.length);
                             try {
-                                groupSocket.receive(packet); 
+                                GroupListener.receive(packet); 
                                 String receivedMsg = new String(packet.getData(), 0, packet.getLength());
                                 processReceivedMessage(receivedMsg);
 
@@ -120,6 +140,7 @@ public class CausalMulticast{
                                         client.deliver("Me informaram que meu indíce deve ser: " + String.valueOf(this.availableIndex));       
                                         this.vectorClockIndex = this.availableIndex;  
                                         this.nextVectorClockIndex = vectorClockIndex + 1; 
+                                        this.port = BASE_PORT + this.vectorClockIndex;
                                         this.status = "joined";
                                     }
                                 }
@@ -132,16 +153,18 @@ public class CausalMulticast{
                             client.deliver("Ninguém respondeu a tentativa de conexão dentro do tempo específicado. Assumindo que o sistema ainda não possui usuários.");
                             this.vectorClockIndex = 0;
                             this.nextVectorClockIndex = 1;
+                            this.port = BASE_PORT + this.vectorClockIndex;
                             this.status = "joined";
                         }       
                     }                           
                     else if(this.status.equals("joined"))
                     {
                         client.deliver("Conectado, posição no Vetor de Relógios: " + String.valueOf(vectorClockIndex));
-                        multicastMsg = "C" + ";l;" + "JOINED " + this.vectorClockIndex;
+                        multicastMsg = "C" + ";l;" + "JOINED " + this.vectorClockIndex + " " + this.ip + " " + this.port;
                         buf = multicastMsg.getBytes();
-                        packet = new DatagramPacket(buf, buf.length, group, port);
-                        groupSocket.send(packet);
+                        packet = new DatagramPacket(buf, buf.length, this.GroupIP, this.GroupPort);
+                        GroupListener.send(packet);
+                        GroupListener.receive(packet);
                         this.status = "working";
                     }                   
                     else if(this.status == "working")
@@ -149,7 +172,7 @@ public class CausalMulticast{
                         buf = new byte[1024];
                         packet = new DatagramPacket(buf, buf.length);
                         try {                            
-                            groupSocket.receive(packet);
+                            GroupListener.receive(packet);
                             String receivedMsg = new String(packet.getData(), 0, packet.getLength());
                             processReceivedMessage(receivedMsg);
                         } catch (Exception e) {
@@ -161,8 +184,9 @@ public class CausalMulticast{
                 e.printStackTrace();
             }
         });
+        
 
-        listenerThread.start();
+        GroupListenerThread.start();
     }
 
     private void processReceivedMessage(String receivedMsg) {
@@ -179,12 +203,13 @@ public class CausalMulticast{
                 case "JOINING":
                     if(this.status.equals("working"))
                     {
-                        String multicastMsg = "C" + ";l;" + "ALREADY_JOINED " + this.nextVectorClockIndex;// Todos informam para o novo usuário qual é o próximo slot disponível.
+                        String multicastMsg = "C" + ";l;" + "ALREADY_JOINED " + this.nextVectorClockIndex + " " + this.vectorClockIndex + " " + this.ip + " " + this.port;// Todos informam para o novo usuário qual é o próximo slot disponível.
                         byte[] buf = multicastMsg.getBytes();
-                        DatagramPacket packet = new DatagramPacket(buf, buf.length, group, port);
+                        DatagramPacket packet = new DatagramPacket(buf, buf.length, GroupIP, GroupPort);
                         client.deliver("Foi solicitado o próximo indice disponível, informei que era o indice " + String.valueOf(this.nextVectorClockIndex) + ".");
                         try {                        
-                            groupSocket.send(packet);
+                            GroupListener.send(packet);
+                            GroupListener.receive(packet);
                         } catch (Exception e) {
                             // TODO: handle exception
                         }
@@ -192,15 +217,70 @@ public class CausalMulticast{
                 break;
                 case "ALREADY_JOINED":
                     //Caso esteja aguardando respostas para saber onde poderá se posicionar no vetor de relógios
-                    //Ele recebe - de todos as instâncias - qual é o lugar disponíve, detectando inconsistência caso eles discordem
+                    //Ele recebe - de todos as instâncias - qual é o lugar disponível, detectando inconsistência caso eles discordem
+                    //Além disso, ele também recebe o endereço IP, a porta, e o indice do processo no VC.
                     //Dessa forma realizando um acordo do tipo consenso para definir onde será colocado no VC.
                     if(this.status.equals("joining"))
-                    {                        
+                    {
+                        System.out.println("ESTOU ESPERANDO, RECEBI UM ALREADY JOINED. " + receivedMsg);
+                        System.out.println("1: " + controlParts[1] + " 2: " + controlParts[2] + " 3: " + controlParts[3]);
+                        int newAvailableIndex = Integer.parseInt(controlParts[1]);
+                        Integer indexVector = Integer.parseInt(controlParts[2]);
+                        InetAddress newIp;
+                        Integer newPort;
+                        DatagramSocket newSocket;
+                        try {                            
+                            newIp = InetAddress.getLocalHost();//InetAddress.getByAddress(controlParts[3]);
+                            newPort = Integer.parseInt(controlParts[4]);
+                        } catch (UnknownHostException e) {
+                            System.out.println("Erro em definir qual é o host partindo do nome do IP enviado. [233]");
+                            return;
+                        }
+                        
+                        try {
+                            newSocket = new DatagramSocket(newPort + (this.vectorClockIndex * vectorClockSize), newIp);
+                        } catch (SocketException e) {
+                            System.out.println("Erro na criação do Socket.");
+                            e.printStackTrace();
+                            return;
+                        }
+                        
+                        
+
+                        IPs.put(indexVector, newIp);
+                        Ports.put(indexVector, newPort);
+                        Sockets.put(indexVector, newSocket);
+                        
+                        //* DA PRA FAZER ISSO VIRAR UMA FUNÇÃO SÓ *//
+                        Thread SocketListenerThread = new Thread(() -> {
+                            try {                
+                                while (true) 
+                                {  
+                                    if(this.status == "working")
+                                    {
+                                        byte[] buf = new byte[1024];
+                                        DatagramPacket packet = new DatagramPacket(buf, buf.length);
+                                        try {                            
+                                            newSocket.receive(packet);
+                                            String threadMsg = new String(packet.getData(), 0, packet.getLength());
+                                            processReceivedMessage(threadMsg);
+                                        } catch (SocketException e) {
+                                            System.out.println("Yo soi el nuevo socketo.");                            
+                                        }
+                                    }
+                                }              
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
+                        });
+                        SocketListenerThread.start();
+                        //* DA PRA FAZER ISSO VIRAR UMA FUNÇÃO SÓ *//
+                        
                         if(this.availableIndex == -1)
                         {
-                            this.availableIndex = Integer.parseInt(controlParts[1]);
+                            this.availableIndex = newAvailableIndex;
                         }
-                        else if(this.availableIndex != Integer.parseInt(controlParts[1]))
+                        else if(this.availableIndex != newAvailableIndex)
                         {
                             client.deliver("Inconsistência informada no número de processos em ação. " + String.valueOf(this.availableIndex) + " " + controlParts[1]);
                         }
@@ -208,7 +288,58 @@ public class CausalMulticast{
                     }
                 break;
                 case "JOINED":
-                    int indexVector = Integer.parseInt(controlParts[1]);
+                    Integer indexVector = Integer.parseInt(controlParts[1]);
+                    InetAddress newIp;
+                    Integer newPort;
+                    DatagramSocket newSocket;
+                    
+                    System.out.println("ESTOU ESPERANDO, RECEBI UM JOINED. " + receivedMsg);
+                    try {
+                        newIp = InetAddress.getLocalHost();//InetAddress.getByName(controlParts[2]);
+                        newPort = Integer.parseInt(controlParts[3]);
+                    } catch (UnknownHostException e) {
+                        System.out.println("Erro em definir qual é o host partindo do nome do IP enviado. [296]");
+                        return;
+                    }
+                    
+                    try {
+                        System.out.println("Erro: " + newIp + " " + newPort);
+                        newSocket = new DatagramSocket(newPort, newIp);
+                    } catch (SocketException e) {
+                        System.out.println("Erro na criação do Socket. [2]");
+                        e.printStackTrace();
+                        return;
+                    }
+
+                    IPs.put(indexVector, newIp);
+                    Ports.put(indexVector, newPort);
+                    Sockets.put(indexVector, newSocket);
+                    
+                    //* DA PRA FAZER ISSO VIRAR UMA FUNÇÃO SÓ *//
+                    Thread SocketListenerThread = new Thread(() -> {
+                        try {                
+                            while (true) 
+                            {  
+                                if(this.status == "working")
+                                {
+                                    byte[] buf = new byte[1024];
+                                    DatagramPacket packet = new DatagramPacket(buf, buf.length);
+                                    try {                            
+                                        newSocket.receive(packet);
+                                        String threadMsg = new String(packet.getData(), 0, packet.getLength());
+                                        processReceivedMessage(threadMsg);
+                                    } catch (Exception e) {
+                                        //System.out.println("Nenhuma mensagem recebida.");                            
+                                    }
+                                }
+                            }              
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    });
+                    SocketListenerThread.start();
+                    //* DA PRA FAZER ISSO VIRAR UMA FUNÇÃO SÓ *//
+                    
                     if(indexVector == this.nextVectorClockIndex)
                     {
                         this.nextVectorClockIndex = indexVector + 1;
