@@ -8,17 +8,27 @@ public class CausalMulticast{
 
     //Constantes
     private int timeout = 1000;             //É um sistema síncrono, usando a medida de 1000ms para o timeout.
-    private int groupEnterTimeout = 5000;   //É um sistema síncrono, usando a medida de 1000ms para o timeout.
-    private int vectorClockSize = 10;
-    private int BASE_PORT = 2000;
-    private int DELAY_INDEX = ;             // E
+    private int groupEnterTimeout = 2500;   //Define quanto tempo ele aguarda as respostas no grupo quando está iniciando a conexão.
+    private int vectorClockSize = 10;       //Define o número de indices do VectorClock.
+    private int BASE_PORT = 2000;           //Define
+    private int delayTimeMillis = 5000;
 
+    
     private Estados status;
 
     //Informações para a etapa de descoberta de novos membros
     private MulticastSocket GroupListener;
     private InetAddress GroupIP;
     private int GroupPort;
+    private long groupEnterTimeCounter = 0; // Variavel que contabiliza o tempo de conexão inicial
+    private long groupEnterStartTime = 0;   // Variável que armazena o momento inicial de tentiva de conexão
+    private int groupConnectTryCount = 1;   // Conta os timeouts 
+
+    //Delay de mensagens
+    private String msgDelayed;      // Armazena temporariamente para thread poder acessar
+    private String timestampDelayed;
+    private String unicastMsgDelayed;
+    private byte[] bufDelayed;
 
     private Mensagem mensagem = new Mensagem();
     private MensagemControle mensagemControle = new MensagemControle();
@@ -27,10 +37,9 @@ public class CausalMulticast{
     private DatagramSocket SelfSocket;
     private int vectorClockIndex;
     private int nextVectorClockIndex = 0;
-    private long groupEnterTimeCounter = 0; // Variavel que contabiliza o tempo de conexão inicial
-    private long groupEnterStartTime = 0;   // Variável que armazena o momento inicial de tentiva de conexão
-    private int groupConnectTryCount = 1;
     private int availableIndex = -1;
+    private int delayAt = -1;               //Indice que controla quem recebe mensagem atrasado
+
     private List<Mensagem> buffer;
     private ICausalMulticast client;
 
@@ -69,6 +78,15 @@ public class CausalMulticast{
      */
     public void mcsend (String msg, ICausalMulticast client) {
         try {
+            this.delayAt = -1;
+            if(msg.contains("|"))
+            {
+                System.out.println(msg);
+                String[] splittedMsg = msg.split("\\|");
+                this.delayAt = Integer.parseInt(splittedMsg[1]);
+                msg = splittedMsg[0];
+            }
+            
 
             // O processo emissor atualiza seu próprio vetor de relógios lógicos incrementando o valor correspondente ao seu índice.
             vectorClock[vectorClockIndex] += 1;
@@ -80,18 +98,18 @@ public class CausalMulticast{
             // O processo emissor anexa seu vetor de relógios lógicos à mensagem antes de enviá-la.
             String timestamp = buildTimestamp();
             String unicastMsg = mensagem.montaMensagemDeliver(msg, timestamp, this.vectorClockIndex);
-
             byte[] buf = unicastMsg.getBytes();
+
             InetAddress temp_ip;
             Integer temp_port;
 
             for (int i = 0; i < this.nextVectorClockIndex; i++) {
-                if (i == this.vectorClockIndex)
+                if (i == this.vectorClockIndex || delayAt == i)
                     continue;
 
                 temp_ip = IPs.get(i);
                 temp_port = Ports.get(i);
-                System.out.println("Enviando para o " + temp_ip + " : " + temp_port);
+                //System.out.println("SISTEMA: Enviando para o " + temp_ip + " : " + temp_port);
                 DatagramPacket packet = new DatagramPacket(buf, buf.length, InetAddress.getByName("localhost"), temp_port);
                 try {
                     this.SelfSocket.send(packet);
@@ -99,6 +117,41 @@ public class CausalMulticast{
                     e.printStackTrace();
                     return;
                 }
+            }
+            
+            if(delayAt != -1)
+            {     
+                        //this.groupEnterTimeCounter = System.currentTimeMillis() - this.groupEnterStartTime;
+                        //if (this.groupEnterTimeCounter < this.groupEnterTimeout) {
+                this.msgDelayed = msg;
+                this.timestampDelayed = timestamp;
+                this.unicastMsgDelayed = unicastMsg;
+                this.bufDelayed = buf;
+                Thread DelayThread = new Thread(() -> {
+                    try {                
+                        while (true) {                       
+                            int shouldDelay = this.delayAt;
+                            this.delayAt = -1;
+
+                            InetAddress temp_ip_delayed = InetAddress.getByName("localhost");//IPs.get(shouldDelay);
+                            Integer temp_port_delayed = Ports.get(shouldDelay);
+                            //System.out.println("SISTEMA: Enviando atrasado para o " + temp_ip_delayed + " : " + temp_port_delayed);
+                            int lenghtbuf = this.bufDelayed.length;
+                            DatagramPacket packet = new DatagramPacket(this.bufDelayed, lenghtbuf, temp_ip_delayed, temp_port_delayed);
+                            
+                            try {
+                                Thread.sleep(delayTimeMillis);
+                                this.SelfSocket.send(packet);
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                                return;
+                            }
+                        }              
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                });
+                DelayThread.start();
             }
             System.out.println("Mensagem enviada.");
 
