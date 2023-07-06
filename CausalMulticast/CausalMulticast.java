@@ -76,8 +76,6 @@ public class CausalMulticast{
      */
     public void mcsend (String msg, ICausalMulticast client) {
         try {
-
-            //client.deliver("(Envio proprio) " + msg);
             if(msg.contains("|"))
             {
                 String[] splittedMsg = msg.split("\\|");
@@ -169,7 +167,6 @@ public class CausalMulticast{
                             //Descarta a própria mensagem de Joining
                             GroupListener.receive(packet);
                             String receivedMsg = new String(packet.getData(), 0, packet.getLength());
-                            //client.deliver("Descartei essa: " + receivedMsg);
                         } catch (Exception e) {
                             // TODO: handle exception
                         }
@@ -208,8 +205,8 @@ public class CausalMulticast{
                             this.Ports.put(this.vectorClockIndex, this.port);
                             this.status = Estados.JOINED;
                         }
-                    } else if (this.status == Estados.JOINED) {
-                        client.deliver("Conectado, posição no Vetor de Relógios: " + vectorClockIndex);
+                    } else if (this.status == Estados.JOINED) {                        
+                        System.out.println("SISTEMA: Conectado, posição no Vetor de Relógios: " + vectorClockIndex);
                         multicastMsg = mensagemControle.montaMensagemControle("JOINED", this.ip, this.port, this.vectorClockIndex);
                         System.out.println(multicastMsg);
                         buf = multicastMsg.getBytes();
@@ -384,7 +381,7 @@ public class CausalMulticast{
                 if (indexVector == this.nextVectorClockIndex) {
                     this.nextVectorClockIndex = indexVector + 1;
                 }
-                client.deliver("SISTEMA: Um novo usuario se conectou. [VCIndex = " + indexVector + "]");
+                System.out.println("SISTEMA: Um novo usuario se conectou. [VCIndex = " + indexVector + "]");
             } else {
                 System.out.println("SISTEMA: Control message \"" + receivedMsg + "\" received.");
             }
