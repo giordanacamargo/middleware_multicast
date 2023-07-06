@@ -244,12 +244,8 @@ public class CausalMulticast{
      */
     private void processUnicastMessage (String receivedMsg) {
         Mensagem mensagemRecebida = new Mensagem(receivedMsg);
-
-        /**
-         *
-         */
-
         buffer.add(mensagemRecebida);
+        updateVectorClock(mensagemRecebida.getTimestamp());
 
         // Verifica se é possível entregar mensagens do buffer
         Iterator<Mensagem> iterator = buffer.iterator();
@@ -259,7 +255,6 @@ public class CausalMulticast{
             //TODO verificar a porta...
             if (bufferedSender != port && isCausallyReady(bufferedMsg)) {
                 client.deliver(mensagemRecebida.getMsg());
-                updateVectorClock(bufferedMsg.getTimestamp());
                 iterator.remove();
             }
         }
