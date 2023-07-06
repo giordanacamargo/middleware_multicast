@@ -20,15 +20,6 @@ public class CausalMulticast{
     private MulticastSocket GroupListener;
     private InetAddress GroupIP;
     private int GroupPort;
-    private long groupEnterTimeCounter = 0; // Variavel que contabiliza o tempo de conexão inicial
-    private long groupEnterStartTime = 0;   // Variável que armazena o momento inicial de tentiva de conexão
-    private int groupConnectTryCount = 1;   // Conta os timeouts 
-
-    //Delay de mensagens
-    private String msgDelayed;      // Armazena temporariamente para thread poder acessar
-    private String timestampDelayed;
-    private String unicastMsgDelayed;
-    private byte[] bufDelayed;
 
     private Mensagem mensagem = new Mensagem();
     private MensagemControle mensagemControle = new MensagemControle();
@@ -37,13 +28,18 @@ public class CausalMulticast{
     private DatagramSocket SelfSocket;
     private int vectorClockIndex;
     private int nextVectorClockIndex = 0;
+    private long groupEnterTimeCounter = 0; // Variavel que contabiliza o tempo de conexão inicial
+    private long groupEnterStartTime = 0;   // Variável que armazena o momento inicial de tentiva de conexão
+    private int groupConnectTryCount = 1;
     private int availableIndex = -1;
-    private int delayAt = -1;               //Indice que controla quem recebe mensagem atrasado
-
     private List<Mensagem> buffer;
     private ICausalMulticast client;
 
     private int[] vectorClock;  //Vetor de Relógios
+
+    //Vetor de Relógios de todos os processos (considera o número máximo de processos)
+    private int[][] vectorClockMatrix = new int[vectorClockSize][vectorClockSize];
+
     private Map<Integer, InetAddress> IPs = new HashMap<>();          //Endereço acessadas pelo Identificador
     private Map<Integer, Integer> Ports = new HashMap<>();            //Endereço acessadas pelo Identificador
 
@@ -78,38 +74,24 @@ public class CausalMulticast{
      */
     public void mcsend (String msg, ICausalMulticast client) {
         try {
-            this.delayAt = -1;
-            if(msg.contains("|"))
-            {
-                System.out.println(msg);
-                String[] splittedMsg = msg.split("\\|");
-                this.delayAt = Integer.parseInt(splittedMsg[1]);
-                msg = splittedMsg[0];
-            }
-            
 
-            // O processo emissor atualiza seu próprio vetor de relógios lógicos incrementando o valor correspondente ao seu índice.
-            vectorClock[vectorClockIndex] += 1;
-
-            //Alterar para garantir Ordem Causal
             client.deliver("(Envio proprio) " + msg);
-
 
             // O processo emissor anexa seu vetor de relógios lógicos à mensagem antes de enviá-la.
             String timestamp = buildTimestamp();
             String unicastMsg = mensagem.montaMensagemDeliver(msg, timestamp, this.vectorClockIndex);
-            byte[] buf = unicastMsg.getBytes();
 
+            byte[] buf = unicastMsg.getBytes();
             InetAddress temp_ip;
             Integer temp_port;
 
             for (int i = 0; i < this.nextVectorClockIndex; i++) {
-                if (i == this.vectorClockIndex || delayAt == i)
+                if (i == this.vectorClockIndex)
                     continue;
 
                 temp_ip = IPs.get(i);
                 temp_port = Ports.get(i);
-                //System.out.println("SISTEMA: Enviando para o " + temp_ip + " : " + temp_port);
+                System.out.println("Enviando para o " + temp_ip + " : " + temp_port);
                 DatagramPacket packet = new DatagramPacket(buf, buf.length, InetAddress.getByName("localhost"), temp_port);
                 try {
                     this.SelfSocket.send(packet);
@@ -118,42 +100,9 @@ public class CausalMulticast{
                     return;
                 }
             }
-            
-            if(delayAt != -1)
-            {     
-                        //this.groupEnterTimeCounter = System.currentTimeMillis() - this.groupEnterStartTime;
-                        //if (this.groupEnterTimeCounter < this.groupEnterTimeout) {
-                this.msgDelayed = msg;
-                this.timestampDelayed = timestamp;
-                this.unicastMsgDelayed = unicastMsg;
-                this.bufDelayed = buf;
-                Thread DelayThread = new Thread(() -> {
-                    try {                
-                        while (true) {                       
-                            int shouldDelay = this.delayAt;
-                            this.delayAt = -1;
-
-                            InetAddress temp_ip_delayed = InetAddress.getByName("localhost");//IPs.get(shouldDelay);
-                            Integer temp_port_delayed = Ports.get(shouldDelay);
-                            //System.out.println("SISTEMA: Enviando atrasado para o " + temp_ip_delayed + " : " + temp_port_delayed);
-                            int lenghtbuf = this.bufDelayed.length;
-                            DatagramPacket packet = new DatagramPacket(this.bufDelayed, lenghtbuf, temp_ip_delayed, temp_port_delayed);
-                            
-                            try {
-                                Thread.sleep(delayTimeMillis);
-                                this.SelfSocket.send(packet);
-                            } catch (Exception e) {
-                                e.printStackTrace();
-                                return;
-                            }
-                        }              
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                });
-                DelayThread.start();
-            }
             System.out.println("Mensagem enviada.");
+            // O processo emissor atualiza seu próprio vetor de relógios lógicos incrementando o valor correspondente ao seu índice.
+            vectorClock[vectorClockIndex] += 1;
 
         } catch (IOException e) {
             e.printStackTrace();
@@ -300,17 +249,25 @@ public class CausalMulticast{
      */
     private void processUnicastMessage (String receivedMsg) {
         Mensagem mensagemRecebida = new Mensagem(receivedMsg);
+        //deposit(m)
         buffer.add(mensagemRecebida);
-        updateVectorClock(mensagemRecebida.getTimestamp());
+        // MCi[j][*]  m.VC
+        updateVectorClock(mensagemRecebida);
+
+        //if i ≠ j then MCi[i][j]  MCi[i][j]+1
+        if (vectorClockIndex != mensagemRecebida.getSender()) {
+            vectorClockMatrix[vectorClockIndex][mensagemRecebida.getSender()]++;
+            //deliver msg to the upper layer % evento de entrega
+            client.deliver(mensagemRecebida.getMsg());
+        }
 
         // Verifica se é possível entregar mensagens do buffer
         Iterator<Mensagem> iterator = buffer.iterator();
+        //when (existe msg no bufferi AND msg.VC[msg.sender] ≤ min1≤x≤n(MCi[x][msg.sender])
         while (iterator.hasNext()) {
             Mensagem bufferedMsg = iterator.next();
-            int bufferedSender = bufferedMsg.getSender();
-            //TODO verificar a porta...
-            if (bufferedSender != port && isCausallyReady(bufferedMsg)) {
-                client.deliver(mensagemRecebida.getMsg());
+            if (isCausallyReady(bufferedMsg)) {
+                // discart(msg)
                 iterator.remove();
             }
         }
@@ -399,18 +356,20 @@ public class CausalMulticast{
         }
     }
 
-    private void updateVectorClock(String timestamp) {
-        String[] timestampParts = timestamp.split(",");
+    private void updateVectorClock(Mensagem mensagemRecebida) {
+
+        String[] timestampParts = mensagemRecebida.getTimestamp().split(",");
         int[] receivedClock = new int[timestampParts.length];
 
         for (int i = 0; i < timestampParts.length; i++) {
             receivedClock[i] = Integer.parseInt(timestampParts[i]);
         }
 
-        // Atualiza o vetor de relógios lógicos com o máximo entre os relógios atuais e o recebido
-        for (int i = 0; i < vectorClock.length; i++) {
-            vectorClock[i] = Math.max(vectorClock[i], receivedClock[i]);
+        // Atualiza a matriz de relógios com o máximo entre os relógios atuais e os recebidos
+        for (int j = 0; j < vectorClockSize; j++) {
+            vectorClockMatrix[vectorClockIndex][j] = Math.max(vectorClockMatrix[vectorClockIndex][j], receivedClock[j]);
         }
+
     }
 
     private boolean isCausallyReady(Mensagem msg) {
@@ -421,15 +380,10 @@ public class CausalMulticast{
         for (int i = 0; i < timestampParts.length; i++) {
             receivedClock[i] = Integer.parseInt(timestampParts[i]);
         }
-
-        // Verifica se todas as entradas do vetor de relógios lógicos são menores ou iguais às correspondentes do vetor recebido
-        for (int i = 0; i < vectorClock.length; i++) {
-            if (i == msg.getSender()) {
-                break;
-            } else {
-                if (vectorClock[i]> receivedClock[i]) {
-                    return false;
-                }
+        
+        for (int j = 0; j < vectorClockSize; j++) {
+            if (vectorClockMatrix[vectorClockIndex][j] > receivedClock[j]) {
+                return false;
             }
         }
 
