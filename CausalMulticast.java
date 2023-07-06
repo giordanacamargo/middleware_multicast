@@ -241,6 +241,7 @@ public class CausalMulticast{
         String msg = parts[3];
         System.out.println("MENSAGEM: " + receivedMsg);
 
+        //* VERIFICAR SE FUNCIONA DE ACORDO COM O ARTIGO TRISTE */
         updateVectorClock(timestamp, sender);
         buffer.add(receivedMsg);
 
@@ -258,6 +259,7 @@ public class CausalMulticast{
                 iterator.remove();
             }
         }  
+        //* VERIFICAR SE FUNCIONA DE ACORDCO COM O ARTIGO TRISTE */
     }
     private void processGroupMessage(String receivedMsg) {
         String[] parts = receivedMsg.split(";l;");        
