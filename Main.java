@@ -20,22 +20,14 @@ public class Main implements ICausalMulticast {
 
     public static void main(String[] args) {
         Main Messenger = new Main();
-        Messenger.sendMulticastMessage("Hello, world!");
+        //Messenger.sendMulticastMessage("Hello, world!");
 
         
         while (true) {
-            System.out.println("Insira a Mensagem: ");
+            System.out.println("Caso deseje atrasar o recebimento em algum processo, insira a mensagem seguida por |n para atrasar o recebimento da mensagem no indice n.");
             Scanner myObj = new Scanner(System.in);
             String msg = myObj.nextLine();
             Messenger.sendMulticastMessage(msg);
-
-            System.out.println("A mensagem é: " + msg + ". Deseja atrasar o envio à alguma instância? (S ou N)");  // Output user input
-            String r = myObj.nextLine();  // Read user inputt
-            if(r.equals("S") || r.equals("s"))
-            {
-                System.out.println("Qual das instâncias deseja atrasar o envio?");
-                String r2 = myObj.nextLine();  // Read user input
-            }
         }   
     }
 }

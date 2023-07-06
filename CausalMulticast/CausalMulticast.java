@@ -21,6 +21,8 @@ public class CausalMulticast{
     private InetAddress GroupIP;
     private int GroupPort;
 
+    private int delayAt = -1;
+
     private Mensagem mensagem = new Mensagem();
     private MensagemControle mensagemControle = new MensagemControle();
     private InetAddress ip;
@@ -75,7 +77,13 @@ public class CausalMulticast{
     public void mcsend (String msg, ICausalMulticast client) {
         try {
 
-            client.deliver("(Envio proprio) " + msg);
+            //client.deliver("(Envio proprio) " + msg);
+            if(msg.contains("|"))
+            {
+                String[] splittedMsg = msg.split("\\|");
+                this.delayAt = Integer.parseInt(splittedMsg[1]);
+                msg = splittedMsg[0];
+            }
 
             // O processo emissor anexa seu vetor de relógios lógicos à mensagem antes de enviá-la.
             String timestamp = buildTimestamp();
@@ -86,12 +94,12 @@ public class CausalMulticast{
             Integer temp_port;
 
             for (int i = 0; i < this.nextVectorClockIndex; i++) {
-                if (i == this.vectorClockIndex)
+                if (i == this.vectorClockIndex || i == this.delayAt)
                     continue;
 
                 temp_ip = IPs.get(i);
                 temp_port = Ports.get(i);
-                System.out.println("Enviando para o " + temp_ip + " : " + temp_port);
+                //System.out.println("Enviando para o " + temp_ip + " : " + temp_port);
                 DatagramPacket packet = new DatagramPacket(buf, buf.length, InetAddress.getByName("localhost"), temp_port);
                 try {
                     this.SelfSocket.send(packet);
@@ -99,6 +107,33 @@ public class CausalMulticast{
                     e.printStackTrace();
                     return;
                 }
+            }
+            
+            if(this.delayAt != -1)
+            {     
+                Thread DelayThread = new Thread(() -> {
+                    try {                
+                        while (true) {                       
+                            int shouldDelay = this.delayAt;
+                            this.delayAt = -1;
+                            
+                            InetAddress temp_ip_delay = InetAddress.getByName("localhost");//IPs.get(shouldDelay);
+                            int temp_port_delay = Ports.get(shouldDelay);
+                            //System.out.println("Enviando para o " + temp_ip + " : " + temp_port);
+                            DatagramPacket packet = new DatagramPacket(buf, buf.length, temp_ip_delay, temp_port_delay);
+                            try {
+                                Thread.sleep(delayTimeMillis);
+                                this.SelfSocket.send(packet);
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                                return;
+                            }
+                        }              
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                });
+                DelayThread.start();
             }
             System.out.println("Mensagem enviada.");
             // O processo emissor atualiza seu próprio vetor de relógios lógicos incrementando o valor correspondente ao seu índice.
@@ -134,7 +169,7 @@ public class CausalMulticast{
                             //Descarta a própria mensagem de Joining
                             GroupListener.receive(packet);
                             String receivedMsg = new String(packet.getData(), 0, packet.getLength());
-                            client.deliver("Descartei essa: " + receivedMsg);
+                            //client.deliver("Descartei essa: " + receivedMsg);
                         } catch (Exception e) {
                             // TODO: handle exception
                         }
