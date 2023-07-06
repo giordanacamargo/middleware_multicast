@@ -8,10 +8,11 @@ public class CausalMulticast{
 
     //Constantes
     private int timeout = 1000;             //É um sistema síncrono, usando a medida de 1000ms para o timeout.
-    private int groupEnterTimeout = 2500;   //Define quanto tempo ele aguarda as respostas no grupo quando está iniciando a conexão.
+    private int groupEnterTimeout = 1500;   //Define quanto tempo ele aguarda as respostas no grupo quando está iniciando a conexão.
     private int vectorClockSize = 10;       //Define o número de indices do VectorClock.
     private int BASE_PORT = 2000;           //Define
     private int delayTimeMillis = 5000;
+    private boolean LOCAL_HOST = true;
 
     
     private Estados status;
@@ -76,11 +77,13 @@ public class CausalMulticast{
      */
     public void mcsend (String msg, ICausalMulticast client) {
         try {
+            //Envia para si mesmo
             if (msg.contains("|")) {
                 String[] splittedMsg = msg.split("\\|");
                 this.delayAt = Integer.parseInt(splittedMsg[1]);
                 msg = splittedMsg[0];
             }
+            client.deliver(msg);
 
             // O processo emissor anexa seu vetor de relógios lógicos à mensagem antes de enviá-la.
             String timestamp = buildTimestamp();
@@ -94,9 +97,10 @@ public class CausalMulticast{
                 if (i == this.vectorClockIndex || i == this.delayAt)
                     continue;
 
-                temp_ip = IPs.get(i);
+                temp_ip = InetAddress.getByName("localhost");
+                if(!LOCAL_HOST) temp_ip = IPs.get(i);
                 temp_port = Ports.get(i);
-                DatagramPacket packet = new DatagramPacket(buf, buf.length, InetAddress.getByName("localhost"), temp_port);
+                DatagramPacket packet = new DatagramPacket(buf, buf.length, temp_ip, temp_port);
                 try {
                     this.SelfSocket.send(packet);
                 } catch (SocketException e) {
@@ -113,6 +117,7 @@ public class CausalMulticast{
                             this.delayAt = -1;
                             
                             InetAddress temp_ip_delay = InetAddress.getByName("localhost"); //IPs.get(shouldDelay);
+                            if(!LOCAL_HOST) temp_ip_delay = IPs.get(shouldDelay);
                             Integer temp_port_delay = Ports.get(shouldDelay);
                             if (temp_port_delay == null) {
                                 System.out.println("Este endereco nao existe para o atraso. Tente novamente.");
