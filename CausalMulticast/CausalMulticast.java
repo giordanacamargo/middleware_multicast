@@ -7,10 +7,11 @@ import java.util.*;
 public class CausalMulticast{
 
     //Constantes
-    private int timeout = 1000; //É um sistema síncrono, usando a medida de 1000ms para o timeout.
-    private int groupEnterTimeout = 5000; //É um sistema síncrono, usando a medida de 1000ms para o timeout.
+    private int timeout = 1000;             //É um sistema síncrono, usando a medida de 1000ms para o timeout.
+    private int groupEnterTimeout = 5000;   //É um sistema síncrono, usando a medida de 1000ms para o timeout.
     private int vectorClockSize = 10;
     private int BASE_PORT = 2000;
+    private int DELAY_INDEX = ;             // E
 
     private Estados status;
 
@@ -28,6 +29,7 @@ public class CausalMulticast{
     private int nextVectorClockIndex = 0;
     private long groupEnterTimeCounter = 0; // Variavel que contabiliza o tempo de conexão inicial
     private long groupEnterStartTime = 0;   // Variável que armazena o momento inicial de tentiva de conexão
+    private int groupConnectTryCount = 1;
     private int availableIndex = -1;
     private List<Mensagem> buffer;
     private ICausalMulticast client;
@@ -145,19 +147,20 @@ public class CausalMulticast{
                                 String receivedMsg = new String(packet.getData(), 0, packet.getLength());
                                 processGroupMessage(receivedMsg);
                             } catch (Exception e) {
-                                System.out.println("Nenhuma resposta recebida nesta tentativa.");
+                                //System.out.println("SISTEMA: Nenhuma resposta recebida nesta tentativa. ["+String.valueOf(this.groupConnectTryCount)+"]");
+                                this.groupConnectTryCount += 1;
                             }
                         } else {
                             if (this.availableIndex != -1) {
                                 if (this.availableIndex >= this.vectorClockSize) {
-                                    client.deliver("O sistema atingiu seu limite de usuários.");
+                                    System.out.println("SISTEMA: O sistema atingiu seu limite de usuários.");
                                     return;
                                 }
-                                System.out.println("Me informaram que meu indíce deve ser: " + this.availableIndex);
+                                System.out.println("SISTEMA: Conectado, indice atribuído: " + this.availableIndex);
                                 this.vectorClockIndex = this.availableIndex;
                                 this.nextVectorClockIndex = vectorClockIndex + 1;
                             } else {
-                                client.deliver("Ninguém respondeu a tentativa de conexão dentro do tempo específicado. Assumindo que o sistema ainda não possui usuários.");
+                                System.out.println("SISTEMA: Ninguém respondeu a tentativa de conexão dentro do tempo específicado. Assumindo que o sistema ainda não possui usuários.");
                                 this.vectorClockIndex = 0;
                                 this.nextVectorClockIndex = 1;
                             }
@@ -216,7 +219,7 @@ public class CausalMulticast{
                             String threadMsg = new String(localPacket.getData(), 0, localPacket.getLength());
                             processUnicastMessage(threadMsg);
                         } catch (Exception e) {
-                            System.out.println("Não recebi mensagem.");                            
+                            //System.out.println("SISTEMA: Não recebi mensagem.");                            
                         }
                     }
                 }              
@@ -269,12 +272,12 @@ public class CausalMulticast{
                     String multicastMsg = "C" + mensagemControle.getSeparador() + "ALREADY_JOINED " + this.nextVectorClockIndex + " " + this.vectorClockIndex + " " + this.ip + " " + this.port;
                     byte[] buf = multicastMsg.getBytes();
                     DatagramPacket packet = new DatagramPacket(buf, buf.length, GroupIP, GroupPort);
-                    System.out.println("Foi solicitado o próximo indice disponível, informei que era o indice " + this.nextVectorClockIndex + ".");
+                    System.out.println("SISTEMA: Foi solicitado o próximo indice disponível, informei que era o indice " + this.nextVectorClockIndex + ".");
                     try {
                         GroupListener.send(packet);
                         GroupListener.receive(packet);
                     } catch (Exception e) {
-                        System.out.println("Houve um estouro ao enviar informações sobre novos slots disponíveis.");
+                        System.out.println("SISTEMA: Houve um estouro ao enviar informações sobre novos slots disponíveis.");
                     }
                 }
 
@@ -296,18 +299,17 @@ public class CausalMulticast{
                         newIp = InetAddress.getLocalHost();//InetAddress.getByAddress(controlParts[3]);
                         newPort = Integer.parseInt(controlParts[4]);
                     } catch (UnknownHostException e) {
-                        System.out.println("Erro em definir qual é o host partindo do nome do IP enviado. [233]");
+                        System.out.println("SISTEMA: Erro em definir qual é o host partindo do nome do IP enviado. [233]");
                         return;
                     }
 
                     if (this.availableIndex == -1) {
                         this.availableIndex = newAvailableIndex;
                     } else if (this.availableIndex != newAvailableIndex) {
-                        client.deliver("Inconsistência informada no indice disponível do vetor de relógios por parte de dois processos diferentes. " + String.valueOf(this.availableIndex) + " " + controlParts[1]);
+                        System.out.println("SISTEMA: Inconsistência informada no indice disponível do vetor de relógios por parte de dois processos diferentes. " + String.valueOf(this.availableIndex) + " " + controlParts[1]);
                     }
-                    client.deliver("Estou me conectando e alguem mandou mensagem... NewAvailableIndex: "+ controlParts[1]);
 
-                    System.out.println("Salvando o endereço " + newIp + ":" + newPort + ", que eh o processo de indice " + indexVector + " no vector clock." );
+                    System.out.println("SISTEMA: Novo endereco " + newIp + ":" + newPort + ", de posicao " + indexVector + " no vector clock." );
 
                     IPs.put(indexVector, newIp);
                     Ports.put(indexVector, newPort);
@@ -322,7 +324,7 @@ public class CausalMulticast{
                 InetAddress newIp;
                 Integer newPort;
 
-                System.out.println("ESTOU ESPERANDO, RECEBI UM JOINED. " + receivedMsg);
+                //System.out.println("ESTOU ESPERANDO, RECEBI UM JOINED. " + receivedMsg);
                 try {
                     //PEGA DIRETO O LOCALHOST
                     newIp = InetAddress.getLocalHost();//InetAddress.getByName(controlParts[2]);
@@ -337,9 +339,9 @@ public class CausalMulticast{
                 if (indexVector == this.nextVectorClockIndex) {
                     this.nextVectorClockIndex = indexVector + 1;
                 }
-                client.deliver("Um novo usuario se conectou.");
+                client.deliver("SISTEMA: Um novo usuario se conectou. [VCIndex = " + indexVector + "]");
             } else {
-                System.out.println("Control message \"" + receivedMsg + "\" received.");
+                System.out.println("SISTEMA: Control message \"" + receivedMsg + "\" received.");
             }
         }
     }
