@@ -76,8 +76,7 @@ public class CausalMulticast{
      */
     public void mcsend (String msg, ICausalMulticast client) {
         try {
-            if(msg.contains("|"))
-            {
+            if (msg.contains("|")) {
                 String[] splittedMsg = msg.split("\\|");
                 this.delayAt = Integer.parseInt(splittedMsg[1]);
                 msg = splittedMsg[0];
@@ -97,7 +96,6 @@ public class CausalMulticast{
 
                 temp_ip = IPs.get(i);
                 temp_port = Ports.get(i);
-                //System.out.println("Enviando para o " + temp_ip + " : " + temp_port);
                 DatagramPacket packet = new DatagramPacket(buf, buf.length, InetAddress.getByName("localhost"), temp_port);
                 try {
                     this.SelfSocket.send(packet);
@@ -107,25 +105,29 @@ public class CausalMulticast{
                 }
             }
             
-            if(this.delayAt != -1)
-            {     
+            if (this.delayAt != -1) {
                 Thread DelayThread = new Thread(() -> {
                     try {                
                         while (true) {                       
                             int shouldDelay = this.delayAt;
                             this.delayAt = -1;
                             
-                            InetAddress temp_ip_delay = InetAddress.getByName("localhost");//IPs.get(shouldDelay);
-                            int temp_port_delay = Ports.get(shouldDelay);
+                            InetAddress temp_ip_delay = InetAddress.getByName("localhost"); //IPs.get(shouldDelay);
+                            Integer temp_port_delay = Ports.get(shouldDelay);
+                            if (temp_port_delay == null) {
+                                System.out.println("Este endereco nao existe para o atraso. Tente novamente.");
+                                break;
+                            }
                             //System.out.println("Enviando para o " + temp_ip + " : " + temp_port);
                             DatagramPacket packet = new DatagramPacket(buf, buf.length, temp_ip_delay, temp_port_delay);
                             try {
                                 Thread.sleep(delayTimeMillis);
                                 this.SelfSocket.send(packet);
                             } catch (Exception e) {
-                                e.printStackTrace();
-                                return;
+                                System.out.println("Este endereco nao existe para o atraso. Tente novamente.");
+                                break;
                             }
+                            break;
                         }              
                     } catch (Exception e) {
                         e.printStackTrace();
@@ -300,6 +302,7 @@ public class CausalMulticast{
             Mensagem bufferedMsg = iterator.next();
             if (isCausallyReady(bufferedMsg)) {
                 // discart(msg)
+                client.deliver(mensagemRecebida.getMsg());
                 iterator.remove();
             }
         }
