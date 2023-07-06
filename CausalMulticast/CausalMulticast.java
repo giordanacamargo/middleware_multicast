@@ -10,7 +10,7 @@ public class CausalMulticast{
     private int timeout = 1000; //É um sistema síncrono, usando a medida de 1000ms para o timeout.
     private int groupEnterTimeout = 5000; //É um sistema síncrono, usando a medida de 1000ms para o timeout.
     private int vectorClockSize = 10;
-    private int BASE_PORT = 1000;
+    private int BASE_PORT = 2000;
 
     private Estados status;
 
@@ -153,7 +153,7 @@ public class CausalMulticast{
                                     client.deliver("O sistema atingiu seu limite de usuários.");
                                     return;
                                 }
-                                System.out.println("Me informaram que meu indíce deve ser: " + String.valueOf(this.availableIndex));
+                                System.out.println("Me informaram que meu indíce deve ser: " + this.availableIndex);
                                 this.vectorClockIndex = this.availableIndex;
                                 this.nextVectorClockIndex = vectorClockIndex + 1;
                             } else {
@@ -171,6 +171,7 @@ public class CausalMulticast{
                     } else if (this.status == Estados.JOINED) {
                         client.deliver("Conectado, posição no Vetor de Relógios: " + vectorClockIndex);
                         multicastMsg = mensagemControle.montaMensagemControle("JOINED", this.ip, this.port, this.vectorClockIndex);
+                        System.out.println(multicastMsg);
                         buf = multicastMsg.getBytes();
                         packet = new DatagramPacket(buf, buf.length, this.GroupIP, this.GroupPort);
                         GroupListener.send(packet);
@@ -265,11 +266,12 @@ public class CausalMulticast{
     }
 
     private void processGroupMessage(String receivedMsg) {
-        MensagemControle mensagem= new MensagemControle(receivedMsg);
-        if (mensagem.isMensagemTipoControle()) {
-            if (mensagem.isMensagemJoining()){
+        this.mensagemControle = new MensagemControle(receivedMsg);
+        if (this.mensagemControle.isMensagemTipoControle()) {
+            if (this.mensagemControle.isMensagemJoining()){
                 if (this.status == Estados.WORKING) {
-                    String multicastMsg = "C" + mensagemControle.getSeparador() + "ALREADY_JOINED " + this.nextVectorClockIndex + " " + this.vectorClockIndex + " " + this.ip + " " + this.port;// Todos informam para o novo usuário qual é o próximo slot disponível.
+                    // Todos informam para o novo usuário qual é o próximo slot disponível.
+                    String multicastMsg = "C" + mensagemControle.getSeparador() + "ALREADY_JOINED " + this.nextVectorClockIndex + " " + this.vectorClockIndex + " " + this.ip + " " + this.port;
                     byte[] buf = multicastMsg.getBytes();
                     DatagramPacket packet = new DatagramPacket(buf, buf.length, GroupIP, GroupPort);
                     System.out.println("Foi solicitado o próximo indice disponível, informei que era o indice " + this.nextVectorClockIndex + ".");
@@ -281,15 +283,14 @@ public class CausalMulticast{
                     }
                 }
 
-            } else if (mensagem.isMensagemAlreadyJoined()) {
+            } else if (this.mensagemControle.isMensagemAlreadyJoined()) {
                 //Caso esteja aguardando respostas para saber onde poderá se posicionar no vetor de relógios
                 //Ele recebe - de todos as instâncias - qual é o lugar disponível, detectando inconsistência caso eles discordem
                 //Além disso, ele também recebe o endereço IP, a porta, e o indice do processo no VC.
                 //Dessa forma realizando um acordo do tipo consenso para definir onde será colocado no VC.
-                if (this.status.equals("joining")) {
-                    String controlParts[] = mensagemControle.getControlParts();
-                    System.out.println("ESTOU ESPERANDO, RECEBI UM ALREADY JOINED. " + receivedMsg);
-                    System.out.println("1: " + controlParts[1] + " 2: " + controlParts[2] + " 3: " + controlParts[3] + " 4: " + controlParts[4]);
+                if (this.status == Estados.JOINING) {
+                    this.mensagemControle = new MensagemControle(receivedMsg);
+                    String controlParts[] = this.mensagemControle.getControlParts();
                     int newAvailableIndex = Integer.parseInt(controlParts[1]);
                     Integer indexVector = Integer.parseInt(controlParts[2]);
                     InetAddress newIp;
@@ -311,13 +312,13 @@ public class CausalMulticast{
                     }
                     client.deliver("Estou me conectando e alguem mandou mensagem... NewAvailableIndex: "+ controlParts[1]);
 
-                    System.out.println("Salvando o endereço " + newIp + ":" + newPort + ", que é o processo de indice " + indexVector + " no vector clock." );
+                    System.out.println("Salvando o endereço " + newIp + ":" + newPort + ", que eh o processo de indice " + indexVector + " no vector clock." );
 
                     IPs.put(indexVector, newIp);
                     Ports.put(indexVector, newPort);
                 }
-            } else if (mensagem.isMensagemJoined()) {
-                if (!this.status.equals("working")) {
+            } else if (this.mensagemControle.isMensagemJoined()) {
+                if (!(this.status == Estados.WORKING)) {
                     return;
                 }
 
@@ -343,7 +344,7 @@ public class CausalMulticast{
                 }
                 client.deliver("Um novo usuario se conectou.");
             } else {
-                System.out.println("Control message \"" + mensagemControle.getMsg() + "\" received.");
+                System.out.println("Control message \"" + receivedMsg + "\" received.");
             }
         }
     }

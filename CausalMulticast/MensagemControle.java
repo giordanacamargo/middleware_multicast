@@ -24,7 +24,7 @@ public class MensagemControle {
     }
 
     public String montaMensagemControle (String tipo, InetAddress ip, int port, int vectorClockIndex) {
-        return controladorMensagensControle + separador + tipo + vectorClockIndex + " " + ip + " " + port;
+        return controladorMensagensControle + separador + tipo + " " + vectorClockIndex + " " + ip + " " + port;
     }
 
     public boolean isMensagemTipoControle () {
