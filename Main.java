@@ -1,6 +1,6 @@
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
-import java.util.Scanner;  // Import the Scanner class
+import CausalMulticast.CausalMulticast;
+import CausalMulticast.ICausalMulticast;
+import java.util.Scanner;
 
 public class Main implements ICausalMulticast {
     private CausalMulticast causalMulticast;
@@ -9,12 +9,12 @@ public class Main implements ICausalMulticast {
         this.causalMulticast = new CausalMulticast("239.255.255.245", 13087, this);
     }
 
-    public void sendMulticastMessage(String msg) {
+    public void sendMulticastMessage (String msg) {
         causalMulticast.mcsend(msg, this);
     }
 
     @Override
-    public void deliver(String msg) {
+    public void deliver (String msg) {
         System.out.println("Received message: " + msg);
     }
 
@@ -23,11 +23,10 @@ public class Main implements ICausalMulticast {
         Messenger.sendMulticastMessage("Hello, world!");
 
         
-        while (true) 
-        {
-            Scanner myObj = new Scanner(System.in);  // Create a Scanner object
+        while (true) {
             System.out.println("Insira a Mensagem: ");
-            String msg = myObj.nextLine();  // Read user input
+            Scanner myObj = new Scanner(System.in);
+            String msg = myObj.nextLine();
             Messenger.sendMulticastMessage(msg);
 
             /*System.out.println("A mensagem é: " + msg + ". Deseja atrasar o envio à alguma instância? (S ou N)");  // Output user input
