@@ -37,21 +37,20 @@ public class CausalMulticast{
     public CausalMulticast(String ip, int port, ICausalMulticast client) {
         try {
             this.status = "starting";
-            this.ip = InetAddress.getByName("127.0.0.1"); //ALTERAR
+            this.ip = InetAddress.getByName("localhost"); //ALTERAR
             this.port = 20000;
             //this.socket = new DatagramSocket(port, group);
             this.GroupIP = InetAddress.getByName(ip);
             this.GroupPort = port;
             this.GroupListener = new MulticastSocket(GroupPort);
-
+            GroupListener.setSoTimeout(this.timeout);
+            GroupListener.joinGroup(this.GroupIP);
 
             this.vectorClock = new int[vectorClockSize]; // Tamanho máximo para o vetor de relógios lógicos
             this.buffer = new ArrayList<>();
             this.client = client;
-            GroupListener.setSoTimeout(this.timeout);
-            GroupListener.joinGroup(this.GroupIP);
             
-            startListening();
+            startGroupListening();
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -59,15 +58,20 @@ public class CausalMulticast{
 
     public void mcsend(String msg, ICausalMulticast client) {
         try {
+            //Verificar se deve ser incrementado antes ou depois
             vectorClock[vectorClockIndex] += 1;
-            client.deliver("(Envio proprio) " + msg);
+            
+            //Alterar para garantir Ordem Causal
+            client.deliver("(Envio proprio) " + msg); 
+
+            //Verificar se funciona adequadamente o buildTimestamp
             String timestamp = buildTimestamp();
-            String multicastMsg = "U" + ";l;" + timestamp + ";l;" + String.valueOf(vectorClockIndex) + ";l;" + msg;
-            byte[] buf = multicastMsg.getBytes();
+
+            String unicastMsg = "U" + ";l;" + timestamp + ";l;" + String.valueOf(vectorClockIndex) + ";l;" + msg;
+            byte[] buf = unicastMsg.getBytes();
 
             InetAddress temp_ip;
             Integer temp_port;
-            //DatagramSocket temp_socket;
 
             for(int i = 0; i < this.nextVectorClockIndex; i++)
             {
@@ -85,8 +89,6 @@ public class CausalMulticast{
                     e.printStackTrace();
                     // TODO: handle exception
                 }
-                //temp_socket.send(packet);
-                //temp_socket.receive(packet);
             }
             System.out.println("Mensagem enviada.");
 
@@ -94,10 +96,10 @@ public class CausalMulticast{
             e.printStackTrace();
         }
     }
-
-    private void startListening() {
-
-        //Responsável por Fazer a verificação de envio de mensagens no grupo de multicast.
+    
+    //Responsável por Fazer a verificação de envio de mensagens no grupo de multicast.
+    private void startGroupListening() 
+    {        
         Thread GroupListenerThread = new Thread(() -> {
             try {                
                 while (true) 
@@ -133,7 +135,7 @@ public class CausalMulticast{
                             try {
                                 GroupListener.receive(packet); 
                                 String receivedMsg = new String(packet.getData(), 0, packet.getLength());
-                                processReceivedMessage(receivedMsg);                                   
+                                processGroupMessage(receivedMsg);                                   
                             } catch (Exception e) {
                                 System.out.println("Nenhuma resposta recebida nesta tentativa.");
                             } 
@@ -147,8 +149,8 @@ public class CausalMulticast{
                                     client.deliver("O sistema atingiu seu limite de usuários.");
                                     return;
                                 }
-                                                                        
-                                client.deliver("Me informaram que meu indíce deve ser: " + String.valueOf(this.availableIndex));       
+                                      
+                                System.out.println("Me informaram que meu indíce deve ser: " + String.valueOf(this.availableIndex));
                                 this.vectorClockIndex = this.availableIndex;  
                                 this.nextVectorClockIndex = vectorClockIndex + 1; 
                                 this.port = BASE_PORT + this.vectorClockIndex;
@@ -187,7 +189,7 @@ public class CausalMulticast{
                         try {                            
                             GroupListener.receive(packet);
                             String receivedMsg = new String(packet.getData(), 0, packet.getLength());
-                            processReceivedMessage(receivedMsg);
+                            processGroupMessage(receivedMsg);
                         } catch (Exception e) {
                             //System.out.println("Nenhuma mensagem recebida.");                            
                         }
@@ -257,7 +259,7 @@ public class CausalMulticast{
             }
         }  
     }
-    private void processReceivedMessage(String receivedMsg) {
+    private void processGroupMessage(String receivedMsg) {
         String[] parts = receivedMsg.split(";l;");        
         String msgType = parts[0];
 
@@ -299,6 +301,7 @@ public class CausalMulticast{
                         Integer newPort;
 
                         try {                            
+                            //REVER CASO DO IP
                             newIp = InetAddress.getLocalHost();//InetAddress.getByAddress(controlParts[3]);
                             newPort = Integer.parseInt(controlParts[4]);
                         } catch (UnknownHostException e) {
@@ -312,12 +315,11 @@ public class CausalMulticast{
                         }
                         else if(this.availableIndex != newAvailableIndex)
                         {
-                            client.deliver("Inconsistência informada no número de processos em ação. " + String.valueOf(this.availableIndex) + " " + controlParts[1]);
+                            client.deliver("Inconsistência informada no indice disponível do vetor de relógios por parte de dois processos diferentes. " + String.valueOf(this.availableIndex) + " " + controlParts[1]);
                         }
-                        client.deliver("Estou me conectando e alguem mandou mensagem... "+ controlParts[1]);
+                        client.deliver("Estou me conectando e alguem mandou mensagem... NewAvailableIndex: "+ controlParts[1]);
                         
-                        System.out.println("Salvando o endereço " + newIp + ":" + newPort + ", que é o processo de indice " + indexVector + "." );
-
+                        System.out.println("Salvando o endereço " + newIp + ":" + newPort + ", que é o processo de indice " + indexVector + " no vector clock." );
 
                         IPs.put(indexVector, newIp);
                         Ports.put(indexVector, newPort);
@@ -334,6 +336,7 @@ public class CausalMulticast{
                     
                     System.out.println("ESTOU ESPERANDO, RECEBI UM JOINED. " + receivedMsg);
                     try {
+                        //PEGA DIRETO O LOCALHOST
                         newIp = InetAddress.getLocalHost();//InetAddress.getByName(controlParts[2]);
                         newPort = Integer.parseInt(controlParts[3]);
                     } catch (UnknownHostException e) {
@@ -347,7 +350,7 @@ public class CausalMulticast{
                     {
                         this.nextVectorClockIndex = indexVector + 1;
                     }
-                    client.deliver("Um novo usuário se conectou.");
+                    client.deliver("Um novo usuario se conectou.");
                 break;
                 default:
                     System.out.println("Control message \"" + msg + "\" received.");
